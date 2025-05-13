@@ -3,6 +3,7 @@ import ipaddress
 import json
 import random
 import secrets
+import urllib.parse
 from collections import defaultdict
 from datetime import datetime as dt, timedelta
 from importlib import resources
@@ -45,6 +46,7 @@ from app.models.user import UserResponse, UserExpireStrategy
 from app.templates import render_template
 from app.utils.keygen import gen_uuid, gen_password, generate_curve25519_pbk
 from app.utils.system import get_public_ip, readable_size
+from app.utils.wireguard_config import WireGuardURLConfig
 
 SERVER_IP = get_public_ip()
 
@@ -60,11 +62,12 @@ subscription_handlers: dict[str, Type[BaseConfig]] = {
     "clash": ClashConfig,
     "sing-box": SingBoxConfig,
     "wireguard": WireGuardConfig,
+    "wireguard-url": WireGuardURLConfig,
 }
 
 handlers_templates = {
     LinksConfig: None,
-    WireGuardConfig: None,
+    WireGuardConfig: resources.files("app.templates") / "wireguard.conf",
     XrayConfig: XRAY_SUBSCRIPTION_TEMPLATE
     or resources.files("app.templates") / "xray.json",
     ClashConfig: CLASH_SUBSCRIPTION_TEMPLATE,
@@ -72,6 +75,10 @@ handlers_templates = {
     SingBoxConfig: SINGBOX_SUBSCRIPTION_TEMPLATE
     or resources.files("app.templates") / "sing-box.json",
 }
+
+# WireGuard URL doesn't need a template file
+if "wireguard-url" in subscription_handlers:
+    handlers_templates[subscription_handlers["wireguard-url"]] = None
 
 
 def generate_subscription_template(
@@ -321,6 +328,12 @@ def create_config(
         else None
     )
 
+    # URL-encode allowed_ips for wireguard-url format
+    allowed_ips_url = None
+    if host.allowed_ips:
+        allowed_ips_list = list(map(str.strip, host.allowed_ips.split(",")))
+        allowed_ips_url = urllib.parse.quote(",".join(allowed_ips_list))
+
     data = V2Data(
         host.inbound.protocol.value if host.inbound else host.host_protocol,
         host.remark.format_map(format_variables),
@@ -351,6 +364,7 @@ def create_config(
             if host.allowed_ips
             else None
         ),
+        allowed_ips_url=allowed_ips_url,
         allow_insecure=host.allowinsecure,
         uuid=auth_uuid,
         password=auth_password,
